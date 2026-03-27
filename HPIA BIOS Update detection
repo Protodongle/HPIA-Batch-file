@@ -1,0 +1,121 @@
+# HPIA BIOS Detection Script for Intune Win32 App
+# Exit 0 = BIOS up to date (Installed)
+# Exit 1 = BIOS update needed (Not Installed)
+# Logs written to C:\temp\hpia\logs\detect\HPIA_Detection.log
+
+$hpiaPath    = "C:\temp\hpia\HPImageAssistant.exe"
+$logDir      = "C:\temp\hpia\logs"
+$reportFolder = "C:\temp\hpia\logs\detect"
+$detectLog   = "C:\temp\hpia\logs\detect\HPIA_Detection.log"
+
+# Ensure detect folder exists
+New-Item -Path $reportFolder -ItemType Directory -Force | Out-Null
+
+function Write-DetectLog {
+    param([string]$Message)
+    $timestamp = Get-Date -Format "MM/dd/yyyy HH:mm:ss"
+    "$timestamp -- $Message" | Out-File -FilePath $detectLog -Append -Encoding utf8
+}
+
+Write-DetectLog "======================================"
+Write-DetectLog "HPIA BIOS Detection started"
+Write-DetectLog "======================================"
+
+# Verify HPIA exists
+if (-not (Test-Path $hpiaPath)) {
+    Write-DetectLog "ERROR: HPIA not found at $hpiaPath"
+    Write-DetectLog "Detection result: NOT INSTALLED (HPIA missing)"
+    Write-Output "0"
+    exit 1
+}
+
+Write-DetectLog "HPIA found at $hpiaPath"
+
+try {
+    Write-DetectLog "Launching HPIA Analyze/List - BIOS category only"
+
+    $process = Start-Process -FilePath $hpiaPath -ArgumentList @(
+        "/Operation:Analyze",
+        "/Category:BIOS",
+        "/Action:List",
+        "/Silent",
+        "/Debug",
+        "/IgnoreGenericOsError",
+        "/LogFolder:$logDir",
+        "/ReportFolder:$reportFolder"
+    ) -Wait -NoNewWindow -PassThru
+
+    $exitCode = $process.ExitCode
+    Write-DetectLog "HPIA exited with code: $exitCode"
+
+    switch ($exitCode) {
+        0 {
+            Write-DetectLog "BIOS is up to date - exit 0 (clean success)"
+            Write-DetectLog "Detection result: INSTALLED"
+            Write-Output "1"
+            exit 0
+        }
+        256 {
+            Write-DetectLog "BIOS is up to date - exit 256 (no recommendations)"
+            Write-DetectLog "Detection result: INSTALLED"
+            Write-Output "1"
+            exit 0
+        }
+        257 {
+            Write-DetectLog "BIOS is up to date - exit 257 (analysis complete, no BIOS action needed)"
+            Write-DetectLog "Detection result: INSTALLED"
+            Write-Output "1"
+            exit 0
+        }
+        1168 {
+            Write-DetectLog "BIOS is up to date - exit 1168 (no applicable updates found)"
+            Write-DetectLog "Detection result: INSTALLED"
+            Write-Output "1"
+            exit 0
+        }
+        3010 {
+            Write-DetectLog "BIOS update available - exit 3010 (reboot required after install)"
+            Write-DetectLog "Detection result: NOT INSTALLED"
+            Write-Output "0"
+            exit 1
+        }
+        3020 {
+            Write-DetectLog "BIOS update available - exit 3020 (reboot in progress)"
+            Write-DetectLog "Detection result: NOT INSTALLED"
+            Write-Output "0"
+            exit 1
+        }
+        4102 {
+            Write-DetectLog "BIOS update available - exit 4102 (install success + reboot needed)"
+            Write-DetectLog "Detection result: NOT INSTALLED"
+            Write-Output "0"
+            exit 1
+        }
+        4103 {
+            Write-DetectLog "BIOS update available - exit 4103 (network retry + install success)"
+            Write-DetectLog "Detection result: NOT INSTALLED"
+            Write-Output "0"
+            exit 1
+        }
+        4104 {
+            # Should not appear now that /IgnoreGenericOsError is set
+            # Treat conservatively as update needed
+            Write-DetectLog "BIOS status unknown - exit 4104 (generic OS override still triggered)"
+            Write-DetectLog "Detection result: NOT INSTALLED (treating as update needed)"
+            Write-Output "0"
+            exit 1
+        }
+        default {
+            Write-DetectLog "WARNING: Unexpected exit code $exitCode - treating as update needed"
+            Write-DetectLog "Detection result: NOT INSTALLED"
+            Write-Output "0"
+            exit 1
+        }
+    }
+
+} catch {
+    Write-DetectLog "ERROR: Exception during detection - $($_.Exception.Message)"
+    Write-DetectLog "Detection result: NOT INSTALLED (error)"
+    Write-Output "0"
+    exit 1
+}
